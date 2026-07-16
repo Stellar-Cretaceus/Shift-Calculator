@@ -11,18 +11,32 @@ export type Role = {
 
 export type AvailabilitySlot = {
   id: number
-  employeeId: number
   dayOfWeek: number
-  startTime: string
-  endTime: string
+  categoryId: number 
+  isMandatory: boolean
 }
 
+export type EmployeeTitle = {
+  id: number
+  name: string
+  workingTimePattern: 'official' | 'shift' | 'custom'
+  customDays: string
+  restOnHoliday: boolean
+  mustWorkAllAvailable: boolean
+  allowedRoleIds: number[]
+  compatibleTitleIds: number[] // Updated to track allowed coworker titles!
+  allowedCategoryIds: number[]
+  allowedLocationIds: number[]
+}
+
+// Update the existing Employee type to include titleId
 export type Employee = {
   id: number
   name: string
   email: string | null
   maxHoursPerWeek: number
-  roleIds: number[]
+  titleId: number | null     // <-- Added this!
+  roleIds: number[]          // These are now their *effective* combined roles
   availability: AvailabilitySlot[]
 }
 
@@ -31,20 +45,35 @@ export type ShiftTemplate = {
   locationId: number
   roleId: number
   dayOfWeek: number
-  startTime: string
-  endTime: string
+  categoryId: number
   requiredCount: number
 }
 
 export type Shift = {
   id: number
   locationId: number
-  roleId: number
+  roleId: number | null 
   employeeId: number | null
   date: string
-  startTime: string
-  endTime: string
+  categoryId: number
 }
+
+export type ShiftCategoryType = 'regular' | 'special' | 'vacation' | 'off';
+
+export type ShiftCategory = {
+  id: number;
+  userId: string;
+  name: string;
+  startTime: string;
+  endTime: string;
+  type: 'regular' | 'special' | 'vacation' | 'off';
+  abbreviation: string;
+  timeOfDay: 'morning' | 'noon' | 'night' | 'none';
+  color: string; // <-- ADD THIS LINE HERE
+  createdAt: Date;
+};
+
+
 
 export const DAY_NAMES = [
   'Sunday',

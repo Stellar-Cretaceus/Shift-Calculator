@@ -1,15 +1,16 @@
 'use client'
 
 import { useRouter } from 'next/navigation'
-import { CalendarDays, LogOut, Users, Tags, MapPin, Settings2 } from 'lucide-react'
+import { CalendarDays, LogOut, Users, Tags, MapPin, Settings2 } from 'lucide-react' // Removed Clock icon
 import { authClient } from '@/lib/auth-client'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { CalendarView } from '@/components/calendar-view'
 import { LocationsPanel } from '@/components/locations-panel'
-import { RolesPanel } from '@/components/roles-panel'
+import { EmployeeTitlesPanel } from '@/components/employee-titles-panel'
 import { EmployeesPanel } from '@/components/employees-panel'
 import { RulesPanel } from '@/components/rules-panel'
+
 import type {
   Employee,
   Location,
@@ -20,20 +21,28 @@ import type {
 
 export function Dashboard({
   userName,
-  weekStart,
+  startDate,
+  endDate,
   locations,
   roles,
   employees,
   templates,
   shifts,
+  categories,
+  titles,
+  holidays,
 }: {
   userName: string
-  weekStart: string
+  startDate: string
+  endDate: string
   locations: Location[]
   roles: Role[]
   employees: Employee[]
   templates: ShiftTemplate[]
   shifts: Shift[]
+  categories: any[]
+  titles: any[]
+  holidays: any[]
 }) {
   const router = useRouter()
 
@@ -83,7 +92,7 @@ export function Dashboard({
               <Users className="size-4" /> Staff
             </TabsTrigger>
             <TabsTrigger value="roles" className="gap-1.5">
-              <Tags className="size-4" /> Roles
+              <Tags className="size-4" /> Employee Titles
             </TabsTrigger>
             <TabsTrigger value="locations" className="gap-1.5">
               <MapPin className="size-4" /> Locations
@@ -92,29 +101,32 @@ export function Dashboard({
 
           <TabsContent value="calendar">
             <CalendarView
-              weekStart={weekStart}
+              startDate={startDate}
+              endDate={endDate}
               shifts={shifts}
               roles={roles}
               employees={employees}
               locations={locations}
+              categories={categories}
               hasTemplates={templates.length > 0}
+              holidays={holidays}
             />
           </TabsContent>
-
           <TabsContent value="rules">
             <RulesPanel
               templates={templates}
               roles={roles}
               locations={locations}
+              categories={categories}
             />
           </TabsContent>
 
           <TabsContent value="employees">
-            <EmployeesPanel employees={employees} roles={roles} />
+            <EmployeesPanel employees={employees} roles={roles} categories={categories} titles={titles}/>
           </TabsContent>
 
           <TabsContent value="roles">
-            <RolesPanel roles={roles} />
+            <EmployeeTitlesPanel titles={titles} roles={roles} categories={categories} />
           </TabsContent>
 
           <TabsContent value="locations">

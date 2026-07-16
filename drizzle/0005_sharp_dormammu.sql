@@ -1,0 +1,1 @@
+ALTER TABLE "shift_categories" ADD COLUMN "color" text DEFAULT '#2563eb' NOT NULL;

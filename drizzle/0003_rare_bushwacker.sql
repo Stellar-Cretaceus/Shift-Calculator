@@ -1,0 +1,1 @@
+ALTER TABLE "shift_categories" ADD COLUMN "timeOfDay" text DEFAULT 'none' NOT NULL;

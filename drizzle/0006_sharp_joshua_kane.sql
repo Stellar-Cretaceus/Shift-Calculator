@@ -1,0 +1,1 @@
+ALTER TABLE "shifts" ALTER COLUMN "roleId" DROP NOT NULL;

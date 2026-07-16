@@ -1,0 +1,55 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1783271882691,
+      "tag": "0000_little_dazzler",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1783535939986,
+      "tag": "0001_overconfident_anthem",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1783610566321,
+      "tag": "0002_ambitious_trauma",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1783717866503,
+      "tag": "0003_rare_bushwacker",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1784038515843,
+      "tag": "0004_living_valkyrie",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1784067963673,
+      "tag": "0005_sharp_dormammu",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1784070956943,
+      "tag": "0006_sharp_joshua_kane",
+      "breakpoints": true
+    }
+  ]
+}
