@@ -81,7 +81,7 @@ export function generateSchedule(
   templates: TemplateInput[],
   employees: EmployeeInput[],
   datesToSchedule: string[],
-  holidayDates: string[],
+  holidayDates: any[], // Defensively accepts both strings and DB objects
   categories: { id: number; name: string; startTime: string; endTime: string; timeOfDay: string; type: string }[],
   existingShifts: GeneratedShift[] = []
 ): GeneratedShift[] {
@@ -115,7 +115,7 @@ export function generateSchedule(
     return cat.timeOfDay
   }
 
-  // 🌟 THE ELASTIC COOLDOWN: Replaces the hard block with a sliding scale penalty
+  // 🌟 THE ELASTIC COOLDOWN
   const getDoubleShiftProximityPenalty = (empId: number, baseDateStr: string, currentResults: GeneratedShift[]) => {
     let penalty = 0
     const offsets = [-4, -3, -2, -1, 1, 2, 3, 4]
@@ -128,16 +128,16 @@ export function generateSchedule(
 
       if (shiftsOnDay.length >= 2) {
         const absOffset = Math.abs(offset)
-        if (absOffset === 1) penalty += 100 // 1 day gap: Extreme penalty (prevents back-to-back)
-        else if (absOffset === 2) penalty += 40  // 2 day gap: High penalty
-        else if (absOffset === 3) penalty += 25  // 3 day gap: Moderate penalty
-        else if (absOffset === 4) penalty += 10  // 4 day gap: Minor penalty
+        if (absOffset === 1) penalty += 100 
+        else if (absOffset === 2) penalty += 40  
+        else if (absOffset === 3) penalty += 25  
+        else if (absOffset === 4) penalty += 10  
       }
     }
     return penalty
   }
 
-  // 🌟 HARD STAMINA CAP: Prevents 6+ consecutive days of working
+  // 🌟 HARD STAMINA CAP
   const checkStaminaBreak = (empId: number, baseDateStr: string, currentResults: GeneratedShift[]) => {
     let consecutiveDays = 0
     for (let offset = -1; offset >= -6; offset--) {
@@ -155,9 +155,25 @@ export function generateSchedule(
 
   for (let idx = 0; idx < datesToSchedule.length; idx++) {
     const dateStr = datesToSchedule[idx]
-    const isHoliday = holidayDates.includes(dateStr)
     const dayOfWeek = new Date(`${dateStr}T00:00:00`).getDay()
     
+    // 🌟 FULL HOLIDAY GUARD FIX: 
+    // This safely extracts the date string from the DB object, then strictly creates the `isHoliday` boolean flag
+    // to shield staff on weekends AND custom database holidays.
+    const isCustomHoliday = holidayDates.some(h => (typeof h === 'string' ? h : h?.date) === dateStr)
+    const isHoliday = isCustomHoliday || dayOfWeek === 0 || dayOfWeek === 6
+
+    if (dateStr === '2026-07-28') {
+      console.log('\n====== SHIFTMAKER DEBUG: JULY 28 ======');
+      console.log('1. Raw DB Holidays Array:', holidayDates);
+      console.log('2. Did we detect July 28 as Custom Holiday?', isCustomHoliday);
+      console.log('3. Is it flagged as a Holiday overall?', isHoliday);
+      
+      const debugEmp = employees.find(e => e.canRestOnHolidays);
+      console.log('4. Example Employee canRestOnHolidays Value:', debugEmp?.canRestOnHolidays, '| Type:', typeof debugEmp?.canRestOnHolidays);
+      console.log('=======================================\n');
+    }
+
     const currentD = new Date(`${dateStr}T00:00:00`)
     const prevD = new Date(currentD)
     prevD.setDate(prevD.getDate() - 1)
@@ -213,6 +229,7 @@ export function generateSchedule(
 
     // --- PHASE 1: MANDATORY STAFF PASS ---
     for (const emp of employees) {
+      // 🌟 Because isHoliday is defined properly above, this guard will now shield them perfectly!
       if (isHoliday && emp.canRestOnHolidays) continue
 
       const isUnavailableToday = results.some(r => {
@@ -334,19 +351,15 @@ export function generateSchedule(
           const aShiftsToday = results.filter(s => s.date === dateStr && Number(s.employeeId) === Number(a.id)).length
           const bShiftsToday = results.filter(s => s.date === dateStr && Number(s.employeeId) === Number(b.id)).length
 
-          // 🌟 THE ELASTIC EFFICIENCY ALGORITHM 🌟
-          // - Base score: Monthly shifts * 10
-          // - Day Saver Bonus: -20 if already working 1 shift (pulls double shift)
+          // 🌟 THE ELASTIC EFFICIENCY ALGORITHM 
           let scoreA = (aMonthlyShifts * 10) - (aShiftsToday === 1 ? 20 : 0)
           let scoreB = (bMonthlyShifts * 10) - (bShiftsToday === 1 ? 20 : 0)
 
-          // - Elastic Penalty: Highly penalizes back-to-back double shifts
           if (aShiftsToday === 1) scoreA += getDoubleShiftProximityPenalty(a.id, dateStr, results)
           if (bShiftsToday === 1) scoreB += getDoubleShiftProximityPenalty(b.id, dateStr, results)
 
           const targetType = getShiftTypeConstant(t.categoryId)
 
-          // Morning + Night Soft Penalty (+15 is enough to heavily favor Morning+Noon instead)
           if (targetType === 'night') {
             const aHasMorning = results.some(s => s.date === dateStr && Number(s.employeeId) === Number(a.id) && getShiftTypeConstant(s.categoryId) === 'morning')
             if (aHasMorning) scoreA += 15 

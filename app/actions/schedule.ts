@@ -130,7 +130,7 @@ export async function generateRange(
 
       mustWorkAllAvailable: myTitle ? myTitle.mustWorkAllAvailable : false,
       canRestOnHolidays: myTitle 
-        ? ((myTitle as any).canRestOnHolidays ?? (myTitle as any).canRestOnHoliday ?? false) 
+        ? ((myTitle as any).restOnHoliday ?? (myTitle as any).rest_on_holiday ?? false) 
         : false,
 
       allowedDays: allowedDays,

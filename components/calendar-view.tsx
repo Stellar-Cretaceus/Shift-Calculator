@@ -396,7 +396,7 @@ export function CalendarView({
     <div className="flex flex-col gap-4 relative">
       
       {/* Control Actions Configuration Topbar Menu */}
-      <div className="flex flex-wrap items-end justify-between gap-3 bg-muted/30 p-4 rounded-xl border">
+      <div className="flex flex-wrap items-end justify-between gap-3 bg-muted/30 p-4 rounded-xl border max-w-6xl mx-auto w-full">
         <div className="flex flex-wrap items-end gap-3">
           
           <div className="flex flex-col gap-1">
@@ -563,15 +563,16 @@ export function CalendarView({
         </>
       )}
 
-      {/* RENDERING TRACK B: New Spreadsheet Matrix View Layout Mode */}
+      {/* RENDERING TRACK B: New Spreadsheet Matrix View Layout Mode (Comfortable & Legible Fit) */}
       {viewMode === 'matrix' && (
         <Card className="border rounded-xl overflow-hidden shadow-sm bg-card">
           <div className="w-full overflow-x-auto">
             <table className="w-full border-collapse text-left text-xs">
               <thead>
                 <tr className="bg-muted/40 border-b divide-x">
-                  <th className="p-3 font-bold text-muted-foreground bg-background sticky left-0 z-20 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] min-w-[150px]">
-                    Staff Name / Date
+                  {/* 🌟 EXPANDED: Wider name column with more padding for better readability */}
+                  <th className="p-3 font-bold text-muted-foreground bg-background sticky left-0 z-20 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] min-w-[140px] max-w-[180px] truncate">
+                    Staff Name
                   </th>
                   {activeMonthDaysSequence.map((dateStr) => {
                     const dateObj = new Date(`${dateStr}T00:00:00`)
@@ -581,8 +582,9 @@ export function CalendarView({
                     return (
                       <th
                         key={dateStr}
+                        /* 🌟 EXPANDED: Increased width to 48px and restored proper padding */
                         className={cn(
-                          "p-2 text-center font-bold min-w-[42px] cursor-pointer hover:bg-muted/60 transition select-none",
+                          "p-2 text-center font-bold min-w-[48px] cursor-pointer hover:bg-muted/60 transition select-none",
                           isWeekendOrHoliday ? "text-red-500 bg-red-500/[0.02]" : "text-foreground"
                         )}
                         onClick={() => setActiveModalDate(dateStr)}
@@ -590,7 +592,7 @@ export function CalendarView({
                         <div className="text-[10px] font-medium text-muted-foreground tracking-tight opacity-70">
                           {CALENDAR_WEEKDAYS[dateObj.getDay()]}
                         </div>
-                        <div className="text-sm mt-0.5">{dateObj.getDate()}</div>
+                        <div className="text-sm mt-0.5 leading-none">{dateObj.getDate()}</div>
                       </th>
                     )
                   })}
@@ -600,9 +602,10 @@ export function CalendarView({
               <tbody className="divide-y">
                 {sortedEmployees.map((employee) => (
                   <tr key={employee.id} className="hover:bg-muted/20 transition divide-x">
-                    <td className="p-2.5 font-bold text-foreground bg-card sticky left-0 z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] flex items-center gap-2">
+                    {/* 🌟 EXPANDED: Name cell has more breathing room and larger text */}
+                    <td className="p-3 font-bold text-foreground bg-card sticky left-0 z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] flex items-center gap-2 min-w-[140px] max-w-[180px]">
                       <div className="size-1.5 rounded-full bg-primary/60 shrink-0" />
-                      <span className="truncate">{employee.name}</span>
+                      <span className="truncate text-xs lg:text-sm">{employee.name}</span>
                     </td>
 
                     {activeMonthDaysSequence.map((dateStr) => {
@@ -620,9 +623,11 @@ export function CalendarView({
                             setActiveModalDate(dateStr)
                             setPopupEmpId(String(employee.id))
                           }}
-                          className={cn("p-1.5 text-center transition cursor-pointer relative h-11 select-none hover:bg-muted/40", isRedDay && "bg-red-500/[0.005]")}
+                          /* 🌟 EXPANDED: Increased cell height to h-12 and padding to p-1.5 */
+                          className={cn("p-1.5 text-center transition cursor-pointer relative h-12 select-none hover:bg-muted/40", isRedDay && "bg-red-500/[0.005]")}
                         >
                           {personalDayShifts.length > 0 ? (
+                            /* 🌟 EXPANDED: Gap restored so double-shift pills aren't touching */
                             <div className="flex flex-wrap items-center justify-center gap-1">
                               {personalDayShifts.map((shift) => {
                                 const role = roleById(shift.roleId)
@@ -633,7 +638,8 @@ export function CalendarView({
                                   <span
                                     key={shift.id}
                                     title={`${role?.name || 'Role'}: ${cat?.name || 'Shift'}`}
-                                    className="px-1.5 py-0.5 text-[10px] font-black rounded text-white shadow-sm inline-block animate-in zoom-in-90 duration-100"
+                                    /* 🌟 EXPANDED: Pills are slightly larger, text size bumped to 11px */
+                                    className="px-1.5 py-0.5 text-[11px] leading-tight font-black rounded text-white shadow-sm inline-block animate-in zoom-in-90 duration-100"
                                     style={{ backgroundColor: cat?.color ?? '#3b82f6' }}
                                   >
                                     {abbreviationCode}
@@ -642,7 +648,7 @@ export function CalendarView({
                               })}
                             </div>
                           ) : (
-                            <span className="text-muted-foreground/10 font-light text-[10px]">-</span>
+                            <span className="text-muted-foreground/15 font-light text-xs">-</span>
                           )}
                         </td>
                       )
@@ -652,9 +658,9 @@ export function CalendarView({
 
                 {openCount > 0 && (
                   <tr className="bg-destructive/[0.02] hover:bg-destructive/[0.04] divide-x border-t-2">
-                    <td className="p-2.5 font-extrabold text-destructive bg-card sticky left-0 z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] flex items-center gap-2">
+                    <td className="p-3 font-extrabold text-destructive bg-card sticky left-0 z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] flex items-center gap-2 min-w-[140px] max-w-[180px]">
                       <div className="size-2 rounded-full bg-destructive animate-pulse shrink-0" />
-                      <span>Open Slots / ตกหล่น</span>
+                      <span className="truncate text-xs lg:text-sm">Open / ตกหล่น</span>
                     </td>
                     {activeMonthDaysSequence.map((dateStr) => {
                       const unassignedDayShifts = bufferedShifts.filter(
@@ -663,7 +669,7 @@ export function CalendarView({
                       return (
                         <td key={dateStr} onClick={() => setActiveModalDate(dateStr)} className="p-1.5 text-center cursor-pointer hover:bg-destructive/10">
                           {unassignedDayShifts.length > 0 ? (
-                            <span className="bg-destructive/10 text-destructive border border-destructive/20 font-black px-1.5 py-0.5 rounded text-[10px]">
+                            <span className="bg-destructive/10 text-destructive border border-destructive/20 font-black px-1.5 py-0.5 rounded text-[11px]">
                               {unassignedDayShifts.length}
                             </span>
                           ) : null}
