@@ -85,6 +85,12 @@ export function generateSchedule(
   categories: { id: number; name: string; startTime: string; endTime: string; timeOfDay: string; type: string }[],
   existingShifts: GeneratedShift[] = []
 ): GeneratedShift[] {
+  
+  // 🛑 BANDAID CONFIGURATION: NEMESIS MATRIX 🛑
+  // (Future upgrade: You can swap these to check emp.roleIds.includes(YOUR_ROLE_ID) instead!)
+  const JUNIOR_EMP_IDS = [15, 16]; 
+  const S2_EMP_IDS = [10, 11, 12, 13, 14];
+
   let results: GeneratedShift[] = existingShifts.map(s => ({ ...s }))
 
   const assignedShiftCount = new Map<number, number>()
@@ -158,21 +164,8 @@ export function generateSchedule(
     const dayOfWeek = new Date(`${dateStr}T00:00:00`).getDay()
     
     // 🌟 FULL HOLIDAY GUARD FIX: 
-    // This safely extracts the date string from the DB object, then strictly creates the `isHoliday` boolean flag
-    // to shield staff on weekends AND custom database holidays.
     const isCustomHoliday = holidayDates.some(h => (typeof h === 'string' ? h : h?.date) === dateStr)
     const isHoliday = isCustomHoliday || dayOfWeek === 0 || dayOfWeek === 6
-
-    if (dateStr === '2026-07-28') {
-      console.log('\n====== SHIFTMAKER DEBUG: JULY 28 ======');
-      console.log('1. Raw DB Holidays Array:', holidayDates);
-      console.log('2. Did we detect July 28 as Custom Holiday?', isCustomHoliday);
-      console.log('3. Is it flagged as a Holiday overall?', isHoliday);
-      
-      const debugEmp = employees.find(e => e.canRestOnHolidays);
-      console.log('4. Example Employee canRestOnHolidays Value:', debugEmp?.canRestOnHolidays, '| Type:', typeof debugEmp?.canRestOnHolidays);
-      console.log('=======================================\n');
-    }
 
     const currentD = new Date(`${dateStr}T00:00:00`)
     const prevD = new Date(currentD)
@@ -229,7 +222,6 @@ export function generateSchedule(
 
     // --- PHASE 1: MANDATORY STAFF PASS ---
     for (const emp of employees) {
-      // 🌟 Because isHoliday is defined properly above, this guard will now shield them perfectly!
       if (isHoliday && emp.canRestOnHolidays) continue
 
       const isUnavailableToday = results.some(r => {
@@ -254,7 +246,6 @@ export function generateSchedule(
           
           if (shiftsToday.some(s => Number(s.categoryId) === Number(t.categoryId))) return false
 
-          // Hard daily caps
           if (shiftsToday.length >= 2) return false
           if (checkStaminaBreak(emp.id, dateStr, results)) return false
 
@@ -285,6 +276,19 @@ export function generateSchedule(
     // --- PHASE 2: CASUAL STAFF LOTTERY BACKFILL ---
     for (const t of remainingTemplates) {
       for (let slot = 0; slot < t.remainingCount; slot++) {
+        
+        // 🌟 BANDAID FIX: Count how many Juniors & S2s are ALREADY assigned to this specific shift category today
+        const assignedEmpIds = results
+          .filter(r => r.date === dateStr && Number(r.categoryId) === Number(t.categoryId) && r.employeeId !== null)
+          .map(r => Number(r.employeeId));
+          
+        let currentSpecialCount = 0;
+        for (const eid of assignedEmpIds) {
+          if (JUNIOR_EMP_IDS.includes(eid) || S2_EMP_IDS.includes(eid)) {
+            currentSpecialCount++;
+          }
+        }
+
         const eligible = employees.filter((emp) => {
           if (isHoliday && emp.canRestOnHolidays) return false
           if (!emp.allowedDays.includes(dayOfWeek)) return false
@@ -307,7 +311,6 @@ export function generateSchedule(
           
           if (shiftsToday.some(s => Number(s.categoryId) === Number(t.categoryId))) return false
 
-          // Hard daily caps
           if (shiftsToday.length >= 2) return false
           if (checkStaminaBreak(emp.id, dateStr, results)) return false
 
@@ -352,11 +355,20 @@ export function generateSchedule(
           const bShiftsToday = results.filter(s => s.date === dateStr && Number(s.employeeId) === Number(b.id)).length
 
           // 🌟 THE ELASTIC EFFICIENCY ALGORITHM 
-          let scoreA = (aMonthlyShifts * 10) - (aShiftsToday === 1 ? 20 : 0)
-          let scoreB = (bMonthlyShifts * 10) - (bShiftsToday === 1 ? 20 : 0)
+          let scoreA = (aMonthlyShifts * 10) - (aShiftsToday === 1 ? 10 : 0)
+          let scoreB = (bMonthlyShifts * 10) - (bShiftsToday === 1 ? 10 : 0)
 
           if (aShiftsToday === 1) scoreA += getDoubleShiftProximityPenalty(a.id, dateStr, results)
           if (bShiftsToday === 1) scoreB += getDoubleShiftProximityPenalty(b.id, dateStr, results)
+
+          // 🌟 THE NEMESIS PENALTY 🌟
+          // If the shift already has 2 Juniors/S2s, hitting a 3rd is ILLEGAL. Nuke their score by +2000!
+          if ((JUNIOR_EMP_IDS.includes(Number(a.id)) || S2_EMP_IDS.includes(Number(a.id))) && currentSpecialCount >= 2) {
+            scoreA += 2000;
+          }
+          if ((JUNIOR_EMP_IDS.includes(Number(b.id)) || S2_EMP_IDS.includes(Number(b.id))) && currentSpecialCount >= 2) {
+            scoreB += 2000;
+          }
 
           const targetType = getShiftTypeConstant(t.categoryId)
 
