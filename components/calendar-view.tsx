@@ -609,9 +609,20 @@ export function CalendarView({
                     </td>
 
                     {activeMonthDaysSequence.map((dateStr) => {
-                      const personalDayShifts = bufferedShifts.filter(
-                        (s) => s.employeeId === employee.id && s.date === dateStr
-                      )
+                      const personalDayShifts = bufferedShifts
+                        .filter((s) => s.employeeId === employee.id && s.date === dateStr)
+                        .sort((a, b) => {
+                          const catA = catById(a.categoryId)
+                          const catB = catById(b.categoryId)
+                          
+                          // Assign a weight to each shift type
+                          const order: Record<string, number> = { morning: 1, noon: 2, night: 3 }
+                          
+                          const rankA = catA?.timeOfDay ? order[catA.timeOfDay] || 4 : 4
+                          const rankB = catB?.timeOfDay ? order[catB.timeOfDay] || 4 : 4
+                          
+                          return rankA - rankB
+                        })
                       const dateObj = new Date(`${dateStr}T00:00:00`)
                       const isDbHoliday = holidays.some(h => h.date === dateStr)
                       const isRedDay = dateObj.getDay() === 0 || dateObj.getDay() === 6 || isDbHoliday
