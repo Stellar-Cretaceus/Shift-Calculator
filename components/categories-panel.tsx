@@ -9,15 +9,13 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { toast } from 'sonner'
-import { shiftHours } from '@/lib/scheduler'
+import {
+  shiftHours,
+} from '@/lib/scheduler/date/dates'
+import type {
+  ShiftCategory,
+} from '@/lib/types'
 
-// You'll need to add this type to your types.ts file!
-export type ShiftCategory = {
-  id: number;
-  name: string;
-  startTime: string;
-  endTime: string;
-}
 
 export function CategoriesPanel({ categories }: { categories: ShiftCategory[] }) {
   const [name, setName] = useState('')
@@ -33,7 +31,15 @@ export function CategoriesPanel({ categories }: { categories: ShiftCategory[] })
     }
     startTransition(async () => {
       try {
-        await createCategory({ name, startTime: start, endTime: end })
+        await createCategory({
+          name,
+          startTime: start,
+          endTime: end,
+          type: 'regular',
+          abbreviation: '',
+          timeOfDay: 'morning',
+          color: '#2563eb',
+        })
         setName('')
         toast.success('Category added')
       } catch (e) {

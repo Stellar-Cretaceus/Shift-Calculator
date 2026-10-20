@@ -6,10 +6,14 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "test:run": "vitest run"
   },
   "dependencies": {
     "@base-ui/react": "^1.5.0",
+    "@dnd-kit/core": "^6.3.1",
+    "@dnd-kit/sortable": "^10.0.0",
+    "@dnd-kit/utilities": "^3.2.2",
     "@vercel/analytics": "1.6.1",
     "better-auth": "^1.6.23",
     "class-variance-authority": "^0.7.1",
@@ -36,7 +40,8 @@
     "drizzle-kit": "^0.31.10",
     "postcss": "^8.5",
     "tailwindcss": "^4.2.0",
-    "typescript": "5.7.3"
+    "typescript": "5.7.3",
+    "vitest": "^4.1.11"
   },
   "pnpm": {
     "overrides": {

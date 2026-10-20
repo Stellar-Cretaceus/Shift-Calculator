@@ -1,196 +1,371 @@
 'use server'
 
 import { db } from '@/lib/db'
+
 import {
-  employees,
-  employeeTitles,
-  titlePermissions,
-  employeeRoleOverrides,
-  availability,
-  shiftTemplates,
   shifts,
-  holidays,
-  shiftCategories,
-  titleAllowedLocations,
-  titleAllowedCategories,
 } from '@/lib/db/schema'
-import { getUserId } from '@/lib/session'
-import { generateSchedule, getDatesInRange } from '@/lib/scheduler'
-import { and, asc, eq, gte, lte } from 'drizzle-orm'
-import { revalidatePath } from 'next/cache'
+
+import {
+  getUserId,
+} from '@/lib/session'
+
+import {
+  generateBestSchedule,
+} from '@/lib/scheduler'
+
+
+import {
+  and,
+  asc,
+  eq,
+  gte,
+  lte,
+} from 'drizzle-orm'
+
+import {
+  revalidatePath,
+} from 'next/cache'
+
+import type {
+  Shift,
+} from '@/lib/types'
+
+import {
+  prepareSchedulerData,
+} from '@/lib/scheduler/server/prepareSchedulerData'
+
+import {
+  createSchedulerContext,
+} from '@/lib/scheduler/context'
+
+import {
+  buildRequirements,
+} from '@/lib/scheduler/generation/buildRequirements'
+
+import {
+  getDatesInRange,
+} from '@/lib/scheduler/date/dates'
+
+import {
+  validateSchedule,
+} from '@/lib/scheduler/validation/validateSchedule'
+
+
+
 
 /**
- * Pure sandbox generator: Computes shifts in memory without writing directly to the database.
+ * Pure sandbox generator.
+ *
+ * Loads prepared scheduler data,
+ * generates a preview,
+ * and returns it to the frontend.
+ *
+ * Nothing is written to the database.
  */
 export async function generateRange(
-  startDateStr: string, 
+  startDateStr: string,
   endDateStr: string,
-  clientBufferedShifts?: any[] 
+  clientBufferedShifts?: any[],
 ) {
-  const userId = await getUserId()
 
-  // 🌟 LOOKBACK FIX: Calculate yesterday's exact date safely
-  const startDateObj = new Date(`${startDateStr}T00:00:00`)
-  startDateObj.setDate(startDateObj.getDate() - 1)
-  const y = startDateObj.getFullYear()
-  const m = String(startDateObj.getMonth() + 1).padStart(2, '0')
-  const d = String(startDateObj.getDate()).padStart(2, '0')
-  const fetchStartStr = `${y}-${m}-${d}`
+  // =========================================================
+  // STEP 1 — Prepare scheduler data
+  // =========================================================
 
-  // 1. Fetch parameters exactly like before (but start query from yesterday)
-  const [templates, emps, perms, overrides, avail, holidayData, categoriesData, currentShifts, titleLocs, titleCats, titles] = await Promise.all([
-    db.select().from(shiftTemplates).where(eq(shiftTemplates.userId, userId)),
-    db.select().from(employees).where(eq(employees.userId, userId)),
-    db.select().from(titlePermissions).where(eq(titlePermissions.userId, userId)),
-    db.select().from(employeeRoleOverrides).where(eq(employeeRoleOverrides.userId, userId)),
-    db.select().from(availability).where(eq(availability.userId, userId)),
-    db.select().from(holidays).where(
-      and(gte(holidays.date, startDateStr), lte(holidays.date, endDateStr))
-    ),
-    db.select().from(shiftCategories).where(eq(shiftCategories.userId, userId)),
-    db.select().from(shifts).where(
-      and(
-        eq(shifts.userId, userId),
-        gte(shifts.date, fetchStartStr), // 👈 Pulls in yesterday's constraints!
-        lte(shifts.date, endDateStr)
-      )
-    ),
-    db.select().from(titleAllowedLocations).where(eq(titleAllowedLocations.userId, userId)),
-    db.select().from(titleAllowedCategories).where(eq(titleAllowedCategories.userId, userId)),
-    db.select().from(employeeTitles).where(eq(employeeTitles.userId, userId))
-  ])
+  const {
+    templates,
+    schedulerEmployees,
+    schedulerTitles,
+    schedulerCategories,
+    workingShifts,
+    lockedShifts,
+    holidayDates,
+    pairRoles,
+    compatibilityRows,
+  } =
+    await prepareSchedulerData(
+      startDateStr,
+      endDateStr,
+      clientBufferedShifts,
+    )
 
-  if (templates.length === 0) {
-    throw new Error('Add at least one shift rule before generating a schedule.')
-  }
 
-  // Combine client buffer with the database's historical yesterday shifts
-  let workingShifts = currentShifts
-  if (clientBufferedShifts && clientBufferedShifts.length > 0) {
-    const yesterdayShifts = currentShifts.filter(s => s.date === fetchStartStr)
-    workingShifts = [...yesterdayShifts, ...clientBufferedShifts]
-  }
+  // =========================================================
+  // STEP 2 — Debug snapshot
+  // =========================================================
 
-  // 2. Extract protected overrides from the active working layout
-  const protectedOverrides = workingShifts.filter(shift => {
-    const cat = categoriesData.find(c => Number(c.id) === Number(shift.categoryId))
-    
-    const isVac = cat?.type === 'vacation' || cat?.name === 'ลาหยุด'
-    const isSpecial = cat?.type === 'special'
-    const isOff = cat?.type === 'off' || cat?.name === 'OFF (Lock)'
-    const isManualFloating = !shift.roleId 
+  console.log(
+    '[schedule] generating',
+    {
+      range:
+        `${startDateStr} -> ${endDateStr}`,
 
-    return isVac || isSpecial || isOff || isManualFloating
-  }).map(shift => ({
-    locationId: shift.locationId,
-    roleId: shift.roleId,
-    employeeId: shift.employeeId,
-    date: shift.date,
-    categoryId: shift.categoryId,
-  }))
+      employees:
+        schedulerEmployees.length,
 
-  const holidayDates = holidayData.map(h => h.date)
-  const datesToSchedule = getDatesInRange(startDateStr, endDateStr)
+      titles:
+        schedulerTitles.length,
 
-  const roster = emps.map((emp) => {
-    const titleRoles = emp.titleId 
-      ? perms.filter(p => p.titleId === emp.titleId).map(p => p.roleId)
-      : []
-    const overrideRoles = overrides.filter(o => o.employeeId === emp.id).map(o => o.roleId)
-    const effectiveRoleIds = Array.from(new Set([...titleRoles, ...overrideRoles]))
+      templates:
+        templates.length,
 
-    const allowedLocationIds = titleLocs
-      .filter(tl => tl.titleId === emp.titleId)
-      .map(tl => tl.locationId)
+      categories:
+        schedulerCategories.length,
 
-    const allowedCategoryIds = titleCats
-      .filter(tc => tc.titleId === emp.titleId)
-      .map(tc => tc.categoryId)
+      existingShifts:
+        workingShifts.length,
 
-    const myTitle = titles.find((t) => t.id === emp.titleId)
+      lockedShifts:
+        lockedShifts.length,
 
-    let allowedDays = [0, 1, 2, 3, 4, 5, 6] 
-    if (myTitle) {
-      if (myTitle.workingTimePattern === 'official') {
-        allowedDays = [1, 2, 3, 4, 5] 
-      } else if (myTitle.workingTimePattern === 'custom' && myTitle.customDays) {
-        allowedDays = myTitle.customDays
-          .split(',')
-          .filter(Boolean)
-          .map(Number)
-      }
-    }
+      compatibilityRows:
+        compatibilityRows.length,
 
-    return {
-      id: emp.id,
-      maxHoursPerWeek: emp.maxHoursPerWeek,
-      roleIds: effectiveRoleIds,
-      allowedLocationIds: emp.titleId ? allowedLocationIds : [],
-      allowedCategoryIds: allowedCategoryIds, 
+      pairRoles,
+    },
+  )
 
-      mustWorkAllAvailable: myTitle ? myTitle.mustWorkAllAvailable : false,
-      canRestOnHolidays: myTitle 
-        ? ((myTitle as any).restOnHoliday ?? (myTitle as any).rest_on_holiday ?? false) 
-        : false,
 
-      allowedDays: allowedDays,
+  // =========================================================
+  // STEP 3 — Generate
+  // =========================================================
 
-      availability: avail
-        .filter((a) => a.employeeId === emp.id)
-        .map((a) => ({
-          dayOfWeek: a.dayOfWeek,
-          categoryId: a.categoryId,
-          isMandatory: a.isMandatory ?? false,
-        })),
-    }
-  })
+  const result =
+    generateBestSchedule({
+      startDate:
+        startDateStr,
 
-  // 3. Pure in-memory calculation
-  const generated = generateSchedule(templates, roster, datesToSchedule, holidayDates, categoriesData, protectedOverrides)
+      endDate:
+        endDateStr,
 
-  // 🌟 Strip out yesterday's context shifts before returning the final array to the frontend UI
-  const finalGenerated = generated.filter(g => datesToSchedule.includes(g.date))
-  const openCount = finalGenerated.filter((g) => g.employeeId === null).length
-  
-  return { 
-    shifts: finalGenerated, 
-    total: finalGenerated.length, 
-    open: openCount 
+      employees:
+        schedulerEmployees,
+
+      titles:
+        schedulerTitles,
+
+      templates,
+
+      categories:
+        schedulerCategories,
+
+      existingShifts:
+        workingShifts,
+
+      lockedShifts,
+
+      holidayDates,
+
+      pairRoles,
+    })
+
+
+  console.log(
+    '[schedule] generation complete',
+    {
+      seed:
+        result.seed,
+
+      generated:
+        result.totalGenerated,
+
+      unfilled:
+        result.unfilledCount,
+    },
+  )
+
+
+  // =========================================================
+  // STEP 4 — Frontend result
+  // =========================================================
+
+  return {
+    shifts:
+      result.shifts,
+
+    total:
+      result.totalGenerated,
+
+    open:
+      result.unfilledCount,
+
+    resolvedLockedRoles:
+      result.resolvedLockedRoles,
   }
 }
 
 /**
- * High-performance bulk commit: Clears out target ranges and saves the approved client buffer.
+ * Validate the current unsaved frontend schedule buffer.
+ *
+ * This does NOT:
+ *
+ * - generate shifts
+ * - change shifts
+ * - save anything
+ *
+ * It only returns hard-rule violations.
  */
-export async function commitBufferedShifts(startDateStr: string, endDateStr: string, shiftsList: any[]) {
-  const userId = await getUserId()
+export async function validateBufferedRange(
+  startDateStr: string,
+  endDateStr: string,
+  bufferedShifts: Shift[],
+) {
+
+  // =========================================================
+  // STEP 1 — Prepare the SAME scheduler data generation uses
+  // =========================================================
+
+  const {
+    templates,
+    schedulerEmployees,
+    schedulerTitles,
+    schedulerCategories,
+    workingShifts,
+    lockedShifts,
+    holidayDates,
+    pairRoles,
+  } =
+    await prepareSchedulerData(
+      startDateStr,
+      endDateStr,
+      bufferedShifts,
+    )
+
+
+  // =========================================================
+  // STEP 2 — Build scheduler context
+  // =========================================================
+
+  const context =
+    createSchedulerContext({
+      employees:
+        schedulerEmployees,
+
+      titles:
+        schedulerTitles,
+
+      categories:
+        schedulerCategories,
+
+      existingShifts:
+        workingShifts,
+
+      lockedShifts,
+
+      holidayDates,
+
+      pairRoles,
+
+      /**
+       * Validation has no random choices,
+       * but SchedulerContext requires an RNG.
+       */
+      random:
+        () => 0.5,
+
+      seed:
+        0,
+    })
+
+
+  // =========================================================
+  // STEP 3 — Rebuild configured shift blocks
+  // =========================================================
+
+  const dates =
+    getDatesInRange(
+      startDateStr,
+      endDateStr,
+    )
+
+
+  const blocks =
+    buildRequirements(
+      templates,
+      dates,
+    )
+
+
+  // =========================================================
+  // STEP 4 — Validate
+  // =========================================================
+
+  const violations =
+    validateSchedule(
+      context,
+      blocks,
+    )
+
+
+  return {
+    violations,
+  }
+}
+
+export async function commitBufferedShifts(
+  startDateStr: string,
+  endDateStr: string,
+  shiftsList: any[],
+) {
+  const userId =
+    await getUserId()
 
   await db
     .delete(shifts)
     .where(
       and(
-        eq(shifts.userId, userId),
-        gte(shifts.date, startDateStr),
-        lte(shifts.date, endDateStr),
+        eq(
+          shifts.userId,
+          userId,
+        ),
+        gte(
+          shifts.date,
+          startDateStr,
+        ),
+        lte(
+          shifts.date,
+          endDateStr,
+        ),
       ),
     )
 
+
   if (shiftsList.length > 0) {
-    await db.insert(shifts).values(
-      shiftsList.map((s) => ({
-        userId,
-        locationId: s.locationId,
-        roleId: s.roleId,
-        employeeId: s.employeeId,
-        date: s.date,
-        categoryId: s.categoryId,
-      }))
-    )
+    await db
+      .insert(shifts)
+      .values(
+        shiftsList.map(
+          shift => ({
+            userId,
+
+            locationId:
+              shift.locationId,
+
+            roleId:
+              shift.roleId,
+
+            employeeId:
+              shift.employeeId,
+
+            date:
+              shift.date,
+
+            categoryId:
+              shift.categoryId,
+          }),
+        ),
+      )
   }
 
+
   revalidatePath('/')
-  return { success: true }
+
+  return {
+    success: true,
+  }
 }
+
 
 export async function getShiftsForRange(startDateStr: string, endDateStr: string) {
   const userId = await getUserId()

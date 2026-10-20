@@ -12,7 +12,9 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, Dialog
 import { toast } from 'sonner'
 import { DAY_SHORT, type Role, type EmployeeTitle, type ShiftCategory } from '@/lib/types'
 import { cn } from '@/lib/utils'
-import { shiftHours } from '@/lib/scheduler'
+import {
+  shiftHours,
+} from '@/lib/scheduler/date/dates'
 
 export function EmployeeTitlesPanel({
   titles,
@@ -132,6 +134,7 @@ export function EmployeeTitlesPanel({
           allowedRoleIds,
           compatibleTitleIds,
           allowedCategoryIds,
+          allowedLocationIds: [],
         })
         setName('')
         setAllowedRoleIds([])

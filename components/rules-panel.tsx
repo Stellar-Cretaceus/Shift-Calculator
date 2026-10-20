@@ -16,7 +16,9 @@ import {
   type ShiftTemplate,
   type ShiftCategory,
 } from '@/lib/types'
-import { shiftHours } from '@/lib/scheduler'
+import {
+  shiftHours,
+} from '@/lib/scheduler/date/dates'
 import { cn } from '@/lib/utils'
 
 export function RulesPanel({

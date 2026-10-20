@@ -5,25 +5,32 @@ import { useRouter } from 'next/navigation'
 import {
   Sparkles,
   Trash2,
-  CalendarClock,
-  AlertTriangle,
   Plus,
   Save,
   RotateCcw,
   X,
   Gift,
-  LayoutGrid,
-  TableProperties,
   BarChart3,
   HelpCircle,
+  AlertTriangle,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { toast } from 'sonner'
-import { generateRange, clearRange, assignShift, createShift, deleteShift, commitBufferedShifts } from '@/app/actions/schedule'
+import {
+  generateRange,
+  clearRange,
+  assignShift,
+  createShift,
+  deleteShift,
+  commitBufferedShifts,
+  validateBufferedRange,
+} from '@/app/actions/schedule'
 import { createCategory } from '@/app/actions/data'
-import { formatDate, shiftHours, getDatesInRange } from '@/lib/scheduler'
+import {
+  getDatesInRange,
+} from '@/lib/scheduler/date/dates'
 import {
   type Employee,
   type Location,
@@ -41,6 +48,10 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog'
 import * as XLSX from 'xlsx'
+
+import type {
+  ScheduleViolation,
+} from '@/lib/scheduler/validation/validateSchedule'
 
 const CALENDAR_WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
@@ -68,8 +79,6 @@ export function CalendarView({
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
 
-  // Layout View Mode Switch Track
-  const [viewMode, setViewMode] = useState<'grid' | 'matrix'>('grid')
 
   // Month Picker State Derivation
   const initialDateObj = new Date(`${startDate}T00:00:00`)
@@ -80,14 +89,177 @@ export function CalendarView({
   const [bufferedShifts, setBufferedShifts] = useState<Shift[]>([])
   const [isDirty, setIsDirty] = useState(false)
 
+  const [
+    scheduleViolations,
+    setScheduleViolations,
+  ] = useState<ScheduleViolation[]>([])
+
+  const [
+    isValidating,
+    setIsValidating,
+  ] = useState(false)
+
+  const EMPLOYEE_ORDER_KEY =
+  'scheduler-employee-order'
+  const [employeeOrder, setEmployeeOrder] =
+  useState<number[]>([])
+  const [draggingEmployeeId, setDraggingEmployeeId] =
+  useState<number | null>(null)
+
   useEffect(() => {
-  setBufferedShifts(shifts)
-  setDeletedShiftIds([]) // Reset deletions tracking
-  setIsDirty(false)
-}, [shifts])
+    setBufferedShifts(shifts)
+    setDeletedShiftIds([]) // Reset deletions tracking
+    setIsDirty(false)
+  }, [shifts])
+
+
+  // =========================================================
+  // Live schedule validation
+  // =========================================================
+
+  useEffect(() => {
+
+    /**
+     * Only validate unsaved/manual edits.
+     *
+     * Don't call the validation server action
+     * when the page first loads the DB schedule.
+     */
+    if (!isDirty) {
+      setScheduleViolations([])
+      setIsValidating(false)
+      return
+    }
+
+
+    if (bufferedShifts.length === 0) {
+      setScheduleViolations([])
+      setIsValidating(false)
+      return
+    }
+
+    const timer =
+      window.setTimeout(
+        async () => {
+
+          try {
+            setIsValidating(true)
+
+            const result =
+              await validateBufferedRange(
+                startDate,
+                endDate,
+                bufferedShifts,
+              )
+
+            setScheduleViolations(
+              result.violations,
+            )
+
+          } catch (error) {
+
+            console.error(
+              '[schedule-validation]',
+              error,
+            )
+
+          } finally {
+            setIsValidating(false)
+          }
+        },
+        300,
+      )
+
+    return () => {
+      window.clearTimeout(timer)
+    }
+
+  }, [
+    bufferedShifts,
+    startDate,
+    endDate,
+  ])
+
+
+  /**
+ * Load saved employee order.
+ *
+ * Also handles newly-created or deleted employees:
+ * - deleted IDs disappear
+ * - new employees are appended to the bottom
+ */
+useEffect(() => {
+  const validIds =
+    employees.map(employee => employee.id)
+
+  try {
+    const stored =
+      localStorage.getItem(
+        EMPLOYEE_ORDER_KEY,
+      )
+
+    if (!stored) {
+      setEmployeeOrder(validIds)
+      return
+    }
+
+
+    const savedIds =
+      JSON.parse(stored) as number[]
+
+
+    const preservedIds =
+      savedIds.filter(id =>
+        validIds.includes(id),
+      )
+
+
+    const newIds =
+      validIds.filter(id =>
+        !preservedIds.includes(id),
+      )
+
+
+    setEmployeeOrder([
+      ...preservedIds,
+      ...newIds,
+    ])
+  } catch {
+    setEmployeeOrder(validIds)
+  }
+}, [employees])
+
+
+/**
+ * Save whenever the user changes the row order.
+ */
+useEffect(() => {
+  if (employeeOrder.length === 0) {
+    return
+  }
+
+  localStorage.setItem(
+    EMPLOYEE_ORDER_KEY,
+    JSON.stringify(employeeOrder),
+  )
+}, [employeeOrder])
+
 
   // Custom Modal View Control State
-  const [activeModalDate, setActiveModalDate] = useState<string | null>(null)
+  const [activeModalDate, setActiveModalDate] =
+    useState<string | null>(null)
+
+  /**
+   * Which matrix row opened the modal?
+   *
+   * number = one specific employee
+   * 'open' = unassigned/open slots only
+   * null   = all shifts on that date
+   */
+  const [
+    activeModalEmployeeId,
+    setActiveModalEmployeeId,
+  ] = useState<number | 'open' | null>(null)
 
   // Form states for adding custom shifts inside the day popup modal
   const [popupEmpId, setPopupEmpId] = useState('')
@@ -114,23 +286,50 @@ export function CalendarView({
 
   const activeMonthDaysSequence = getDatesInRange(startDate, endDate)
   const openCount = bufferedShifts.filter((s) => s.employeeId === null).length
-  const sortedEmployees = [...employees].sort((a, b) => a.id - b.id)
+  const sortedEmployees =
+  employeeOrder
+    .map(id =>
+      employees.find(
+        employee =>
+          employee.id === id,
+      ),
+    )
+    .filter(
+      (
+        employee,
+      ): employee is Employee =>
+        employee !== undefined,
+    )
 
+  
+  const businessOperationalDays = activeMonthDaysSequence.filter(dateStr => {
+    const dateObj = new Date(`${dateStr}T00:00:00`)
+    const isDbHoliday = holidays.some(h => h.date === dateStr)
+    return dateObj.getDay() !== 0 && dateObj.getDay() !== 6 && !isDbHoliday
+  }).length
+
+  // 🌟 2. The month change function is restored to its original state
   function executeMonthViewChange(year: number, monthIdx: number) {
     const firstDay = `${year}-${String(monthIdx + 1).padStart(2, '0')}-01`
-    const totalDaysInMonth = new Date(year, monthIdx + 1, 0).getDate()
-    const lastDay = `${year}-${String(monthIdx + 1).padStart(2, '0')}-${String(totalDaysInMonth).padStart(2, '0')}`
+    const daysInNextMonth = new Date(year, monthIdx + 1, 0).getDate()
+    const lastDay = `${year}-${String(monthIdx + 1).padStart(2, '0')}-${String(daysInNextMonth).padStart(2, '0')}`
     router.push(`/?start=${firstDay}&end=${lastDay}`)
   }
 
   function closeModal() {
-  setActiveModalDate(null)
-  setPopupEmpId('')
-  setPopupRoleId('')
-  setPopupCatId('')
-  setPopupLocId('')
-  // Don't wipe deletedShiftIds here so changes persist if they reopen the modal before saving!
-}
+    setActiveModalDate(null)
+
+    // Clear matrix-row filter too
+    setActiveModalEmployeeId(null)
+
+    setPopupEmpId('')
+    setPopupRoleId('')
+    setPopupCatId('')
+    setPopupLocId('')
+
+    // Don't wipe deletedShiftIds here so changes persist
+    // if they reopen the modal before saving!
+  }
 
   function updateShiftAssignmentLocal(shiftId: number, empValue: string) {
     const targetEmpId = !empValue || empValue === 'open' ? null : Number(empValue)
@@ -212,7 +411,12 @@ export function CalendarView({
     toast.success(`Custom ${shiftType} shift added to buffer`)
 
     // Reset forms
-    setPopupEmpId('')
+    setPopupEmpId(
+      typeof activeModalEmployeeId === 'number'
+        ? String(activeModalEmployeeId)
+        : ''
+    )
+
     setPopupRoleId('')
     setPopupCatId('')
     setPopupLocId('')
@@ -260,33 +464,133 @@ export function CalendarView({
 }
 
   function generate() {
-    startTransition(async () => {
-      try {
-        // 1. Grab the sandbox generation results
-        const res = await generateRange(startDate, endDate, bufferedShifts)
-        
-        if (res && res.shifts) {
-          // 2. 🌟 MAP GENERATED SHIFTS TO INCLUDE TEMPORARY NEGATIVE IDs
-          const shiftsWithTempIds: Shift[] = res.shifts.map((s, index) => ({
-            ...s,
-            id: -(index + 1), // Assigns a unique negative ID for TS and React key safety
-          }))
+  startTransition(async () => {
+    try {
+      /**
+       * Send the current workspace to the scheduler.
+       *
+       * Manual / existing shifts are treated as locked
+       * by the backend.
+       */
+      const res =
+        await generateRange(
+          startDate,
+          endDate,
+          bufferedShifts,
+        )
 
-          // 3. Set the state with our newly typed Shift[] array
-          setBufferedShifts(shiftsWithTempIds)
-          setIsDirty(true)
 
-          if (res.open > 0) {
-            toast.warning(`Generated ${res.total} shifts — ${res.open} could not be filled in sandbox preview.`)
-          } else {
-            toast.success(`Generated ${res.total} shifts in sandbox draft mode!`)
-          }
+      if (
+        res &&
+        res.shifts
+      ) {
+
+        /**
+         * Find a safe starting temporary ID.
+         *
+         * Existing manual shifts may already use
+         * negative temporary IDs, so we must avoid
+         * accidentally giving generated shifts
+         * the same IDs.
+         */
+        const lowestExistingId =
+          bufferedShifts.reduce(
+            (lowest, shift) =>
+              Math.min(
+                lowest,
+                shift.id,
+              ),
+            0,
+          )
+
+
+        const generatedShifts:
+          Shift[] =
+          res.shifts.map(
+            (shift, index) => ({
+              ...shift,
+
+              id:
+                lowestExistingId -
+                index -
+                1,
+            }),
+          )
+
+          const resolvedRoleMap =
+          new Map(
+            res.resolvedLockedRoles.map(
+              item => [
+                item.shiftId,
+                item.roleId,
+              ],
+            ),
+          )
+
+
+
+        /**
+         * IMPORTANT:
+         *
+         * Keep existing/manual shifts
+         * and append only the newly generated shifts.
+         *
+         * Do NOT replace the whole buffer.
+         */
+        setBufferedShifts(prev => {
+
+          const withResolvedRoles =
+            prev.map(shift => {
+
+              const resolvedRoleId =
+                resolvedRoleMap.get(
+                  shift.id,
+                )
+
+              if (
+                resolvedRoleId === undefined
+              ) {
+                return shift
+              }
+
+              return {
+                ...shift,
+                roleId:
+                  resolvedRoleId,
+              }
+            })
+
+
+          return [
+            ...withResolvedRoles,
+            ...generatedShifts,
+          ]
+        })
+
+
+        setIsDirty(true)
+
+
+        if (res.open > 0) {
+          toast.warning(
+            `Generated ${res.total} shifts — ${res.open} could not be filled in sandbox preview.`,
+          )
+        } else {
+          toast.success(
+            `Generated ${res.total} shifts in sandbox draft mode!`,
+          )
         }
-      } catch (e) {
-        toast.error(e instanceof Error ? e.message : 'Failed to generate')
       }
-    })
-  }
+
+    } catch (e) {
+      toast.error(
+        e instanceof Error
+          ? e.message
+          : 'Failed to generate',
+      )
+    }
+  })
+}
 
   function clear() {
     startTransition(async () => {
@@ -296,27 +600,108 @@ export function CalendarView({
     })
   }
 
+  function handleEmployeeDragStart(
+    employeeId: number,
+  ) {
+    setDraggingEmployeeId(
+      employeeId,
+    )
+  }
+
+  function getCellViolations(
+    employeeId: number,
+    date: string,
+  ) {
+    return scheduleViolations.filter(
+      violation =>
+        violation.employeeId ===
+          employeeId &&
+        violation.date === date,
+    )
+  }
+
+
+  function handleEmployeeDrop(
+    targetEmployeeId: number,
+  ) {
+    if (
+      draggingEmployeeId === null ||
+      draggingEmployeeId === targetEmployeeId
+    ) {
+      setDraggingEmployeeId(null)
+      return
+    }
+
+
+    setEmployeeOrder(prev => {
+      const next =
+        [...prev]
+
+      const fromIndex =
+        next.indexOf(
+          draggingEmployeeId,
+        )
+
+      const toIndex =
+        next.indexOf(
+          targetEmployeeId,
+        )
+
+
+      if (
+        fromIndex === -1 ||
+        toIndex === -1
+      ) {
+        return prev
+      }
+
+
+      const [movedEmployee] =
+        next.splice(
+          fromIndex,
+          1,
+        )
+
+      next.splice(
+        toIndex,
+        0,
+        movedEmployee,
+      )
+
+
+      return next
+    })
+
+
+    setDraggingEmployeeId(null)
+  }
+
   function exportToExcel() {
     const headers = [
       'Staff Name', 
       ...activeMonthDaysSequence.map(d => new Date(`${d}T00:00:00`).getDate().toString()),
-      'Natural OFF', // 🌟 Swapped order
-      'Total OFF Days', // 🌟 Reverted to Total
-      'OT Shifts',
-      'Non-OT'
+      ...categories.map(c => c.name), // 🌟 NEW: Add dynamic headers for every shift category!
+      'Natural OFF', 
+      'Total OFF Days', 
+      'Total Working Days', 
+      'OT Shifts'           
     ]
 
     const rows = sortedEmployees.map(employee => {
+      // 1. Generate the daily cells (the calendar matrix part)
       const dayCells = activeMonthDaysSequence.map(dateStr => {
         const personalShifts = bufferedShifts.filter(s => s.employeeId === employee.id && s.date === dateStr)
         return personalShifts.map(s => catById(s.categoryId)?.abbreviation || s.roleId).join(', ') || '-'
       })
 
-      let lockedOffCount = 0, naturalOffCount = 0, otCount = 0, regularCount = 0
-      
+      // 2. Prepare the counters
+      let lockedOffCount = 0, naturalOffCount = 0, totalWorkingDays = 0
+      const categoryCounters: Record<number, number> = {}
+      categories.forEach(c => { categoryCounters[c.id] = 0 }) // 🌟 NEW: Initialize a counter for each category
+
+      // 3. Tally up the data for the month
       activeMonthDaysSequence.forEach(dateStr => {
         const dayShifts = bufferedShifts.filter(s => s.employeeId === employee.id && s.date === dateStr)
-        const isHoliday = new Date(`${dateStr}T00:00:00`).getDay() === 0 || holidays.some(h => h.date === dateStr)
         
         const hasExplicitRest = dayShifts.some(s => {
           const t = catById(s.categoryId)?.type;
@@ -329,17 +714,34 @@ export function CalendarView({
           naturalOffCount++
         }
 
+        // Tally all physical working shifts AND specific categories
         dayShifts.forEach(s => {
-          const t = catById(s.categoryId)?.type;
-          if (t !== 'vacation' && t !== 'off') {
-            if (isHoliday) otCount++; else regularCount++
+          const cat = catById(s.categoryId);
+          if (cat) {
+            categoryCounters[cat.id]++ // 🌟 NEW: Count how many of this specific shift they worked
+            if (cat.type !== 'vacation' && cat.type !== 'off') {
+               totalWorkingDays++
+            }
           }
         })
       })
 
-      // 🌟 Export columns matching the requested UI order: [..., Natural, Total, OT, Non-OT]
       const totalOffDays = lockedOffCount + naturalOffCount;
-      return [employee.name, ...dayCells, naturalOffCount, totalOffDays, otCount, regularCount]
+      const otShifts = Math.max(0, totalWorkingDays - businessOperationalDays);
+
+      // 🌟 NEW: Map the category counters into an array to drop into the row
+      const categoryTotalsRow = categories.map(c => categoryCounters[c.id]);
+
+      // Return the completed row in the exact same order as the headers
+      return [
+        employee.name, 
+        ...dayCells, 
+        ...categoryTotalsRow, // 🌟 Inserts the specific shift summaries!
+        naturalOffCount, 
+        totalOffDays, 
+        totalWorkingDays, 
+        otShifts
+      ]
     })
 
     const worksheet = XLSX.utils.aoa_to_sheet([headers, ...rows])
@@ -351,34 +753,45 @@ export function CalendarView({
     toast.success('Excel file generated and downloading!')
   }
 
-  const totalDaysInMonth = new Date(selectedYear, selectedMonth + 1, 0).getDate()
-  const firstDayOfWeek = new Date(selectedYear, selectedMonth, 1).getDay()
-  const gridCells: { date: string; dayNum: number; isPadding: boolean; dayOfWeekIndex: number }[] = []
-
-  if (firstDayOfWeek > 0) {
-    const prevMonthLastDate = new Date(selectedYear, selectedMonth, 0).getDate()
-    const prevMonthObj = new Date(selectedYear, selectedMonth - 1, 1)
-    for (let i = firstDayOfWeek - 1; i >= 0; i--) {
-      const dNum = prevMonthLastDate - i
-      const dStr = `${prevMonthObj.getFullYear()}-${String(prevMonthObj.getMonth() + 1).padStart(2, '0')}-${String(dNum).padStart(2, '0')}`
-      gridCells.push({ date: dStr, dayNum: dNum, isPadding: true, dayOfWeekIndex: new Date(`${dStr}T00:00:00`).getDay() })
-    }
-  }
-  for (let i = 1; i <= totalDaysInMonth; i++) {
-    const dStr = `${selectedYear}-${String(selectedMonth + 1).padStart(2, '0')}-${String(i).padStart(2, '0')}`
-    gridCells.push({ date: dStr, dayNum: i, isPadding: false, dayOfWeekIndex: new Date(`${dStr}T00:00:00`).getDay() })
-  }
-  const remaining = 7 - (gridCells.length % 7)
-  if (remaining < 7) {
-    const nextMonthObj = new Date(selectedYear, selectedMonth + 1, 1)
-    for (let i = 1; i <= remaining; i++) {
-      const dStr = `${nextMonthObj.getFullYear()}-${String(nextMonthObj.getMonth() + 1).padStart(2, '0')}-${String(i).padStart(2, '0')}`
-      gridCells.push({ date: dStr, dayNum: i, isPadding: true, dayOfWeekIndex: new Date(`${dStr}T00:00:00`).getDay() })
-    }
-  }
-
   const nativeSelectClass = "h-9 rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring w-full"
   const matchedModalHoliday = holidays.find(h => h.date === activeModalDate)
+
+  const activeModalShifts =
+  bufferedShifts.filter(shift => {
+
+    // Must match selected date first
+    if (
+      shift.date !== activeModalDate
+    ) {
+      return false
+    }
+
+
+    // Open row:
+    // only show unassigned shifts
+    if (
+      activeModalEmployeeId === 'open'
+    ) {
+      return shift.employeeId === null
+    }
+
+
+    // Employee row:
+    // only show that employee's shifts
+    if (
+      typeof activeModalEmployeeId === 'number'
+    ) {
+      return (
+        shift.employeeId ===
+        activeModalEmployeeId
+      )
+    }
+
+
+    // Header click:
+    // show every shift on that date
+    return true
+  })
 
   // Pre-defined Tailwind colors mapping constants array
   const SHIFT_COLORS = [
@@ -435,22 +848,6 @@ export function CalendarView({
             </select>
           </div>
 
-          <div className="flex items-center border rounded-lg bg-background p-0.5 h-9 ml-2 shadow-sm">
-            <button
-              type="button"
-              onClick={() => setViewMode('grid')}
-              className={cn("px-3 h-full flex items-center gap-1.5 text-xs font-semibold rounded-md transition", viewMode === 'grid' ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:bg-muted/50")}
-            >
-              <LayoutGrid className="size-3.5" /> Calendar Grid
-            </button>
-            <button
-              type="button"
-              onClick={() => setViewMode('matrix')}
-              className={cn("px-3 h-full flex items-center gap-1.5 text-xs font-semibold rounded-md transition", viewMode === 'matrix' ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:bg-muted/50")}
-            >
-              <TableProperties className="size-3.5" /> Spreadsheet Matrix
-            </button>
-          </div>
         </div>
 
         <div className="flex items-center gap-2">
@@ -459,7 +856,7 @@ export function CalendarView({
               <Button variant="outline" size="sm" onClick={resetWorkspaceBuffer} className="border-amber-500/50 text-amber-500 hover:bg-amber-500/10">
                 <RotateCcw className="size-4 mr-1.5" /> Reset Buffer
               </Button>
-              <Button size="sm" onClick={saveWorkspaceChanges} className="bg-emerald-600 hover:bg-emerald-700 text-white shadow">
+              <Button size="sm" onClick={saveWorkspaceChanges} disabled={isPending || isValidating || scheduleViolations.length > 0} className=" bg-emerald-600 hover:bg-emerald-700 text-white shadow ">
                 <Save className="size-4 mr-1.5" /> Save Changes
               </Button>
             </>
@@ -494,77 +891,53 @@ export function CalendarView({
         </div>
       )}
 
-      {/* RENDERING TRACK A: Classic Standard Calendar Grid View Layout Mode */}
-      {viewMode === 'grid' && (
-        <>
-          <div className="grid grid-cols-7 gap-3 mb-1 text-center hidden lg:grid">
-            {CALENDAR_WEEKDAYS.map((day, idx) => (
-              <span 
-                key={day} 
-                className={cn("text-xs font-bold uppercase tracking-wider", (idx === 0 || idx === 6) ? "text-red-400" : "text-muted-foreground")}
-              >
-                {day}
-              </span>
-            ))}
-          </div>
-
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-7">
-            {gridCells.map((cell, index) => {
-              const isToday = cell.date === formatDate(new Date())
-              const isDbHoliday = holidays.some(h => h.date === cell.date)
-              const isRedFrame = cell.dayOfWeekIndex === 0 || cell.dayOfWeekIndex === 6 || isDbHoliday
-
-              const dayShifts = bufferedShifts
-                .filter((s) => s.date === cell.date)
-                .sort((a, b) => (catById(a.categoryId)?.startTime || '').localeCompare(catById(b.categoryId)?.startTime || ''))
-
-              return (
-                <Card
-                  key={`${cell.date}-${index}`}
-                  onClick={() => !cell.isPadding && setActiveModalDate(cell.date)}
-                  className={cn(
-                    'flex flex-col gap-2 p-2 min-h-36 transition bg-card border text-left',
-                    cell.isPadding ? 'opacity-20 bg-muted/5 border-muted/20 pointer-events-none select-none' : 'cursor-pointer select-none hover:border-muted-foreground/40',
-                    isToday && 'ring-2 ring-primary',
-                    (!cell.isPadding && isRedFrame) ? 'border-red-500/50 shadow-sm shadow-red-500/5 bg-gradient-to-b from-red-500/[0.015] to-transparent' : 'border-border'
-                  )}
-                >
-                  <div className="flex items-baseline justify-between px-1 pointer-events-none">
-                    <span className={cn('text-[10px] font-bold uppercase lg:hidden', isRedFrame ? 'text-red-400' : 'text-muted-foreground')}>{CALENDAR_WEEKDAYS[cell.dayOfWeekIndex]}</span>
-                    <span className="hidden lg:inline" />
-                    <span className={cn('text-sm font-bold', isToday && 'text-primary', (!cell.isPadding && isRedFrame) && 'text-red-500')}>{cell.dayNum}</span>
-                  </div>
-
-                  <div className="flex flex-col gap-1.5 flex-1 pointer-events-none">
-                    {!cell.isPadding && dayShifts.length === 0 && (
-                      <div className="flex flex-1 items-center justify-center rounded-md border border-dashed border-muted/30 py-6">
-                        <CalendarClock className="size-4 text-muted-foreground/20" />
-                      </div>
-                    )}
-                    {!cell.isPadding && dayShifts.slice(0, 3).map((shift) => {
-                      const role = roleById(shift.roleId)
-                      const emp = empById(shift.employeeId)
-                      const cat = catById(shift.categoryId)
-                      return (
-                        <div key={shift.id} className="text-[11px] px-2 py-1 rounded border-l-2 bg-muted/30 truncate flex items-center justify-between gap-1" style={{ borderLeftColor: cat?.color ?? '#4b5563' }}>
-                          <span className="font-semibold text-foreground/90 truncate">{role?.name}:</span>
-                          <span className={cn("truncate max-w-[60%] font-medium", !shift.employeeId && "text-destructive font-bold text-[10px]")}>{shift.employeeId ? emp?.name : 'Open'}</span>
-                        </div>
-                      )
-                    })}
-                    {!cell.isPadding && dayShifts.length > 3 && (
-                      <div className="text-[10px] text-center font-bold text-muted-foreground bg-muted/40 rounded py-0.5 mt-auto">+ {dayShifts.length - 3} more entries</div>
-                    )}
-                  </div>
-                </Card>
-              )
-            })}
-          </div>
-        </>
+      {isValidating && (
+        <div
+          className="
+            text-xs
+            text-muted-foreground
+            px-3
+            py-2
+          "
+        >
+          Checking schedule rules...
+        </div>
       )}
 
+      {scheduleViolations.length > 0 && (
+        <div
+          className="
+            text-xs
+            bg-red-500/10
+            text-red-500
+            border
+            border-red-500/20
+            px-3
+            py-2
+            rounded-lg
+            font-medium
+            flex
+            items-center
+            gap-2
+          "
+        >
+          <AlertTriangle className="size-4 shrink-0" />
+
+          <span>
+            {scheduleViolations.length}{' '}
+            schedule rule violation
+            {scheduleViolations.length === 1
+              ? ''
+              : 's'}
+            {' '}found.
+            Fix the red cells before saving.
+          </span>
+        </div>
+      )}
+
+
       {/* RENDERING TRACK B: New Spreadsheet Matrix View Layout Mode (Comfortable & Legible Fit) */}
-      {viewMode === 'matrix' && (
+
         <Card className="border rounded-xl overflow-hidden shadow-sm bg-card">
           <div className="w-full overflow-x-auto">
             <table className="w-full border-collapse text-left text-xs">
@@ -587,7 +960,16 @@ export function CalendarView({
                           "p-2 text-center font-bold min-w-[48px] cursor-pointer hover:bg-muted/60 transition select-none",
                           isWeekendOrHoliday ? "text-red-500 bg-red-500/[0.02]" : "text-foreground"
                         )}
-                        onClick={() => setActiveModalDate(dateStr)}
+                        onClick={() => {
+                          setActiveModalDate(dateStr)
+
+                          // Header means:
+                          // show the entire day.
+                          setActiveModalEmployeeId(null)
+
+                          // Don't preselect an employee.
+                          setPopupEmpId('')
+                        }}
                       >
                         <div className="text-[10px] font-medium text-muted-foreground tracking-tight opacity-70">
                           {CALENDAR_WEEKDAYS[dateObj.getDay()]}
@@ -601,14 +983,51 @@ export function CalendarView({
 
               <tbody className="divide-y">
                 {sortedEmployees.map((employee) => (
-                  <tr key={employee.id} className="hover:bg-muted/20 transition divide-x">
-                    {/* 🌟 EXPANDED: Name cell has more breathing room and larger text */}
-                    <td className="p-3 font-bold text-foreground bg-card sticky left-0 z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] flex items-center gap-2 min-w-[140px] max-w-[180px]">
-                      <div className="size-1.5 rounded-full bg-primary/60 shrink-0" />
-                      <span className="truncate text-xs lg:text-sm">{employee.name}</span>
-                    </td>
+                <tr
+                  key={employee.id}
+                  onDragOver={(e) => {
+                    e.preventDefault()
+                  }}
+                  onDrop={() => {
+                    handleEmployeeDrop(employee.id)
+                  }}
+                  className={cn(
+                    "hover:bg-muted/20 transition divide-x",
+                    draggingEmployeeId === employee.id &&
+                      "opacity-50"
+                  )}
+                >
 
-                    {activeMonthDaysSequence.map((dateStr) => {
+                  {/* Employee name + drag handle */}
+                  <td className="p-3 font-bold text-foreground bg-card sticky left-0 z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] min-w-[160px] max-w-[200px]">
+                    <div className="flex items-center gap-2">
+
+                      <button
+                        type="button"
+                        draggable
+                        onDragStart={() => {
+                          handleEmployeeDragStart(employee.id)
+                        }}
+                        onDragEnd={() => {
+                          setDraggingEmployeeId(null)
+                        }}
+                        className="cursor-grab active:cursor-grabbing text-muted-foreground hover:text-foreground select-none"
+                        title="Drag to reorder employee"
+                      >
+                        ☰
+                      </button>
+
+                      <div className="size-1.5 rounded-full bg-primary/60 shrink-0" />
+
+                      <span className="truncate text-xs lg:text-sm">
+                        {employee.name}
+                      </span>
+
+                    </div>
+                  </td>
+
+
+                  {activeMonthDaysSequence.map((dateStr) => {
                       const personalDayShifts = bufferedShifts
                         .filter((s) => s.employeeId === employee.id && s.date === dateStr)
                         .sort((a, b) => {
@@ -623,6 +1042,13 @@ export function CalendarView({
                           
                           return rankA - rankB
                         })
+                      const cellViolations =
+                        getCellViolations(
+                          employee.id,
+                          dateStr,
+                        )
+                      const hasViolation =
+                        cellViolations.length > 0
                       const dateObj = new Date(`${dateStr}T00:00:00`)
                       const isDbHoliday = holidays.some(h => h.date === dateStr)
                       const isRedDay = dateObj.getDay() === 0 || dateObj.getDay() === 6 || isDbHoliday
@@ -632,11 +1058,44 @@ export function CalendarView({
                           key={dateStr}
                           onClick={() => {
                             setActiveModalDate(dateStr)
-                            setPopupEmpId(String(employee.id))
+
+                            setActiveModalEmployeeId(
+                              employee.id,
+                            )
+
+                            // Keep this because adding a new shift
+                            // from this employee cell should default
+                            // to this employee.
+                            setPopupEmpId(
+                              String(employee.id)
+                            )
                           }}
                           /* 🌟 EXPANDED: Increased cell height to h-12 and padding to p-1.5 */
-                          className={cn("p-1.5 text-center transition cursor-pointer relative h-12 select-none hover:bg-muted/40", isRedDay && "bg-red-500/[0.005]")}
+                          className={cn('p-1.5 text-center transition cursor-pointer relative h-12 select-none hover:bg-muted/40', isRedDay && 'bg-red-500/[0.005]', hasViolation &&
+                              'ring-2 ring-inset ring-red-500 bg-red-500/10',
+                          )}
+                          title={
+                            hasViolation
+                              ? cellViolations
+                                  .map(
+                                    violation =>
+                                      `${violation.title}: ${violation.description}`,
+                                  )
+                                  .join('\n\n')
+                              : undefined
+                          }
                         >
+                            {hasViolation && (
+                            <AlertTriangle
+                              className="
+                                absolute
+                                top-0.5
+                                right-0.5
+                                size-3
+                                text-red-500
+                              "
+                            />
+                          )}
                           {personalDayShifts.length > 0 ? (
                             /* 🌟 EXPANDED: Gap restored so double-shift pills aren't touching */
                             <div className="flex flex-wrap items-center justify-center gap-1">
@@ -669,31 +1128,146 @@ export function CalendarView({
 
                 {openCount > 0 && (
                   <tr className="bg-destructive/[0.02] hover:bg-destructive/[0.04] divide-x border-t-2">
-                    <td className="p-3 font-extrabold text-destructive bg-card sticky left-0 z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] flex items-center gap-2 min-w-[140px] max-w-[180px]">
+                   <td className="p-3 font-extrabold text-destructive bg-card sticky left-0 z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] flex items-center gap-2 min-w-[140px] max-w-[180px]">
                       <div className="size-2 rounded-full bg-destructive animate-pulse shrink-0" />
-                      <span className="truncate text-xs lg:text-sm">Open / ตกหล่น</span>
+
+                      <span className="truncate text-xs lg:text-sm">
+                        Open / ตกหล่น
+                      </span>
                     </td>
-                    {activeMonthDaysSequence.map((dateStr) => {
-                      const unassignedDayShifts = bufferedShifts.filter(
-                        (s) => s.employeeId === null && s.date === dateStr
-                      )
-                      return (
-                        <td key={dateStr} onClick={() => setActiveModalDate(dateStr)} className="p-1.5 text-center cursor-pointer hover:bg-destructive/10">
-                          {unassignedDayShifts.length > 0 ? (
-                            <span className="bg-destructive/10 text-destructive border border-destructive/20 font-black px-1.5 py-0.5 rounded text-[11px]">
-                              {unassignedDayShifts.length}
-                            </span>
-                          ) : null}
-                        </td>
-                      )
-                    })}
+                    {activeMonthDaysSequence.map(
+                      (dateStr) => {
+
+                        const unassignedDayShifts =
+                          bufferedShifts
+                            .filter(
+                              shift =>
+                                shift.employeeId === null &&
+                                shift.date === dateStr,
+                            )
+                            .sort((a, b) => {
+
+                              const catA =
+                                catById(a.categoryId)
+
+                              const catB =
+                                catById(b.categoryId)
+
+                              const order:
+                                Record<string, number> = {
+                                  morning: 1,
+                                  noon: 2,
+                                  night: 3,
+                                }
+
+                              const rankA =
+                                catA?.timeOfDay
+                                  ? order[
+                                      catA.timeOfDay
+                                    ] ?? 4
+                                  : 4
+
+                              const rankB =
+                                catB?.timeOfDay
+                                  ? order[
+                                      catB.timeOfDay
+                                    ] ?? 4
+                                  : 4
+
+                              return rankA - rankB
+                            })
+
+
+                        return (
+                          <td
+                            key={dateStr}
+                            onClick={() => {
+                              if (
+                                unassignedDayShifts.length ===
+                                0
+                              ) {return}
+
+                              setActiveModalDate(dateStr)
+                              setActiveModalEmployeeId('open')
+                              setPopupEmpId('')
+                            }}
+
+                            className={cn(
+                              'p-1.5 text-center relative h-12 select-none',
+                              unassignedDayShifts.length > 0 && 'cursor-pointer hover:bg-destructive/10'
+                            )}
+                          >
+
+                            {unassignedDayShifts.length > 0 ? (
+                              <div
+                                className="
+                                  flex
+                                  flex-wrap
+                                  items-center
+                                  justify-center
+                                  gap-1
+                                "
+                              >
+
+                                {unassignedDayShifts.map(
+                                  shift => {
+
+                                    const cat =
+                                      catById(
+                                        shift.categoryId,
+                                      )
+
+                                    const abbreviation =
+                                      cat?.abbreviation ||
+                                      cat?.name?.charAt(0) ||
+                                      '?'
+
+                                    return (
+                                      <span key={shift.id}
+                                        title={`${cat?.name ?? 'Shift'} - Open`}
+                                        className="
+                                          px-1.5
+                                          py-0.5
+                                          text-[11px]
+                                          leading-tight
+                                          font-black
+                                          rounded
+                                          text-white
+                                          shadow-sm
+                                          inline-block
+                                        "
+                                        style={{
+                                          backgroundColor:
+                                            cat?.color ??
+                                            '#ef4444'
+                                        }}
+                                      >
+                                        {abbreviation}
+                                      </span>
+                                    )
+                                  },
+                                )}
+                              </div>
+                            ) : 
+                            (
+                              <span
+                                className="text-muted-foreground/15
+                                  text-xs"
+                              >
+                              -
+                             </span>
+                            )}
+                          </td>
+                        )
+                      },
+                    )}
                   </tr>
                 )}
               </tbody>
             </table>
           </div>
         </Card>
-      )}
+      
 
       {/* NEW SECTION: Synced Operational Roster Summary Board */}
       <Card className="border rounded-xl overflow-hidden shadow-sm bg-card mt-2">
@@ -710,12 +1284,12 @@ export function CalendarView({
                   <th key={cat.id} className="p-2.5 text-center min-w-[70px] font-semibold">{cat.name}</th>
                 ))}
                 
-                {/* 🌟 REORDERED & RENAMED: Natural OFF first, then Total OFF Days */}
                 <th className="p-2.5 text-center bg-slate-500/5 text-slate-500 font-extrabold min-w-[75px]">Natural OFF</th>
                 <th className="p-2.5 text-center bg-amber-500/5 text-amber-500 font-extrabold min-w-[70px]">Total OFF Days</th>
                 
+                {/* 🌟 NEW: Total Working Days and OT Shifts placement */}
+                <th className="p-2.5 text-center bg-primary/5 text-primary font-extrabold min-w-[85px]">Total Working Days</th>
                 <th className="p-2.5 text-center bg-red-500/5 text-red-500 font-extrabold min-w-[65px]">OT Shifts</th>
-                <th className="p-2.5 text-center bg-primary/5 text-primary font-extrabold min-w-[75px]">Non-OT</th>
               </tr>
             </thead>
             <tbody className="divide-y font-medium text-foreground/90">
@@ -725,14 +1299,9 @@ export function CalendarView({
 
                 let lockedOffDays = 0
                 let naturalOffDays = 0
-                let otShiftsAccumulator = 0
-                let regularShiftsAccumulator = 0
+                let totalWorkingDays = 0 // 🌟 Replace old accumulators
 
                 activeMonthDaysSequence.forEach((dateStr) => {
-                  const dateObj = new Date(`${dateStr}T00:00:00`)
-                  const isDbHoliday = holidays.some(h => h.date === dateStr)
-                  const isHolidayDay = dateObj.getDay() === 0 || dateObj.getDay() === 6 || isDbHoliday
-
                   const dayShifts = bufferedShifts.filter(
                     (s) => s.employeeId === employee.id && s.date === dateStr
                   )
@@ -753,19 +1322,16 @@ export function CalendarView({
                     if (cat) {
                       categoryCounters[cat.id]++
                       
+                      // 🌟 Tally all regular and special working shifts
                       if (cat.type !== 'vacation' && cat.type !== 'off') {
-                        if (isHolidayDay) {
-                          otShiftsAccumulator++
-                        } else {
-                          regularShiftsAccumulator++
-                        }
+                         totalWorkingDays++
                       }
                     }
                   })
                 })
 
-                // Calculate the true total OFF representation
                 const totalOffDaysCombined = lockedOffDays + naturalOffDays;
+                const otShiftsCalculated = Math.max(0, totalWorkingDays - businessOperationalDays);
 
                 return (
                   <tr key={employee.id} className="hover:bg-muted/10 transition divide-x">
@@ -794,11 +1360,11 @@ export function CalendarView({
                     <td className="p-2 text-center bg-amber-500/[0.015] font-bold text-amber-500 text-sm">
                       {totalOffDaysCombined}
                     </td>
-                    <td className="p-2 text-center bg-red-500/[0.015] font-bold text-red-500 text-sm">
-                      {otShiftsAccumulator}
-                    </td>
                     <td className="p-2 text-center bg-primary/[0.015] font-bold text-primary text-sm">
-                      {regularShiftsAccumulator}
+                      {totalWorkingDays}
+                    </td>
+                    <td className="p-2 text-center bg-red-500/[0.015] font-bold text-red-500 text-sm">
+                      {otShiftsCalculated}
                     </td>
                   </tr>
                 )
@@ -817,9 +1383,41 @@ export function CalendarView({
                 <h3 className="font-bold text-lg text-foreground flex items-center gap-2">
                   Manage Workspace Rules
                 </h3>
-                <p className="text-xs text-muted-foreground font-medium mt-0.5">
-                  Target Date Focus: {new Date(`${activeModalDate}T00:00:00`).toLocaleDateString('default', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
-                </p>
+                <div className="mt-0.5 flex flex-col gap-1">
+                  <p className="text-xs text-muted-foreground font-medium">
+                    Target Date Focus:{' '}
+                    {new Date(
+                      `${activeModalDate}T00:00:00`,
+                    ).toLocaleDateString(
+                      'default',
+                      {
+                        weekday: 'long',
+                        year: 'numeric',
+                        month: 'long',
+                        day: 'numeric',
+                      },
+                    )}
+                  </p>
+
+                  {typeof activeModalEmployeeId ===
+                    'number' && (
+                    <p className="text-xs text-primary font-semibold">
+                      Staff:{' '}
+                      {
+                        empById(
+                          activeModalEmployeeId,
+                        )?.name
+                      }
+                    </p>
+                  )}
+
+                  {activeModalEmployeeId ===
+                    'open' && (
+                    <p className="text-xs text-destructive font-semibold">
+                      Showing unassigned shifts only
+                    </p>
+                  )}
+                </div>
                 {matchedModalHoliday && (
                   <div className="mt-2 inline-flex items-center gap-1.5 rounded-md bg-red-500/10 border border-red-500/20 px-2.5 py-1 text-xs font-bold text-red-500 animate-in fade-in duration-200">
                     <Gift className="size-3.5" /> {matchedModalHoliday.name}
@@ -834,15 +1432,14 @@ export function CalendarView({
             <div className="p-4 overflow-y-auto flex flex-col gap-5 flex-1">
               <div className="flex flex-col gap-2">
                 <h4 className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Scheduled Workspace Slots</h4>
-                {bufferedShifts.filter(s => s.date === activeModalDate).length === 0 ? (
+                {activeModalShifts.length === 0 ? (
                   <p className="text-sm text-muted-foreground text-center py-8 border border-dashed rounded-lg bg-muted/10">
                     No active shift constraints generated on this matrix coordinate yet.
                   </p>
                 ) : (
                   <div className="flex flex-col gap-2 max-h-56 overflow-y-auto pr-1">
-                    {bufferedShifts
-                      .filter(s => s.date === activeModalDate)
-                      .map((shift) => {
+                    {activeModalShifts.map(
+                      (shift) => {
                         const role = roleById(shift.roleId)
                         const category = catById(shift.categoryId)
                         const isVacationSlot = category?.type === 'vacation'
@@ -953,7 +1550,10 @@ export function CalendarView({
                                 onChange={(e) => {
                                   const nextType = e.target.value as 'regular' | 'special' | 'vacation'
                                   setNewCatType(nextType)
-                                  if (nextType === 'regular') {
+                                  if (
+                                    nextType === 'regular' ||
+                                    nextType === 'special'
+                                  ) {
                                     setNewCatTimeOfDay('morning')
                                   } else {
                                     setNewCatTimeOfDay('none')

@@ -1,0 +1,4 @@
+export const MAX_REBALANCE_SWAPS = 100
+export const MAX_PREFERRED_SPREAD = 3
+export const MAX_TEMPORARY_SPREAD = 4
+export const MAX_THREE_WAY_ATTEMPTS = 1000
