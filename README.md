@@ -1,6 +1,6 @@
 # Constraint-based Workforce Scheduling System (Shift Calculator)
 
-> **Status: Beta**  
+> **Status: Alpha**  
 > Shift Calculator is currently in active development. Core scheduling, validation, manual editing, and optimization features are functional, but some features, configuration options, and scheduling rules are still limited or tailored to the current use case.
 
 **Shift Calculator** is a web-based employee shift scheduling system designed to reduce the amount of manual work required to create monthly staff schedules.
@@ -12,8 +12,8 @@ The project was originally developed around a real healthcare-service scheduling
 
 ---
 
-> 📷 **IMAGE PLACEHOLDER — Project Overview**  
-> Suggested image: Main schedule/calendar page after generating a monthly schedule.
+<img width="1861" height="787" alt="main_scheduler_matrix" src="https://github.com/user-attachments/assets/d4ff637c-4c47-429c-bcf3-2d7d18656238" />
+
 
 ---
 
@@ -435,19 +435,6 @@ The Schedule page is the main workspace for creating and reviewing monthly roste
 
 Users can switch between schedule months and years to review or manage different scheduling periods.
 
----
-
-### Calendar Grid
-
-Displays shifts grouped by calendar date.
-
-Useful for quickly reviewing:
-
-- Daily staffing
-- Shift categories
-- Holidays
-- Individual assignments
-- Open positions
 
 ---
 
@@ -459,8 +446,8 @@ This view is useful for inspecting an individual employee's monthly workload and
 
 ---
 
-> 📷 **IMAGE PLACEHOLDER — Calendar vs Spreadsheet View**  
-> Suggested image: Calendar Grid and Spreadsheet Matrix side by side.
+<img width="1861" height="787" alt="main_scheduler_matrix" src="https://github.com/user-attachments/assets/f6d5ab31-83ca-4712-b6c1-1753b9328fd8" />
+
 
 ---
 
@@ -534,8 +521,8 @@ The scheduler uses this information when evaluating candidates.
 
 ---
 
-> 📷 **IMAGE PLACEHOLDER — Employee Management**  
-> Suggested image: Employee list and employee configuration dialog.
+<img width="1063" height="779" alt="staff_page" src="https://github.com/user-attachments/assets/380c20e2-fcf6-44b0-a2ed-132015ff99a8" />
+
 
 ---
 
@@ -569,7 +556,8 @@ Compatibility rules can also prevent invalid employee pairings.
 
 ---
 
-> 📷 **IMAGE PLACEHOLDER — Title / Compatibility Configuration**
+<img width="1114" height="767" alt="Emolyee_Titles" src="https://github.com/user-attachments/assets/4941ebf9-30e3-44ef-84a3-35438fec55ce" />
+
 
 ---
 
@@ -649,8 +637,8 @@ The scheduler then creates these requirements for matching dates during generati
 
 ---
 
-> 📷 **IMAGE PLACEHOLDER — Shift Rule Configuration**  
-> Suggested image: Rule creation form and list of configured rules.
+<img width="1254" height="826" alt="Shift_Rules" src="https://github.com/user-attachments/assets/18559d14-127b-49ff-a8f3-4cd3af3d384e" />
+
 
 ---
 
@@ -808,15 +796,17 @@ The goal is to make the computer handle the repetitive search and validation wor
 
 ## Screenshots
 
-> 📷 **IMAGE PLACEHOLDER — Main Schedule**
+<img width="1861" height="787" alt="main_scheduler_matrix" src="https://github.com/user-attachments/assets/3901f95e-e1a3-4c2b-91b5-3e414c3c183a" />
 
-> 📷 **IMAGE PLACEHOLDER — Spreadsheet / Matrix View**
 
-> 📷 **IMAGE PLACEHOLDER — Employee Management**
+<img width="1114" height="767" alt="Emolyee_Titles" src="https://github.com/user-attachments/assets/c326a8b9-8364-400e-a934-19fd16bf0ab2" />
 
-> 📷 **IMAGE PLACEHOLDER — Title and Compatibility Settings**
 
-> 📷 **IMAGE PLACEHOLDER — Shift Rules**
+<img width="1254" height="826" alt="Shift_Rules" src="https://github.com/user-attachments/assets/fef292a1-67f3-468d-8fbd-4c92d3a5a0cf" />
+
+
+<img width="1063" height="779" alt="staff_page" src="https://github.com/user-attachments/assets/daa530f5-f537-4221-b7d5-29c889bbf96d" />
+
 
 > 📷 **IMAGE PLACEHOLDER — Validation Warning**
 
